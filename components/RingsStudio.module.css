@@ -114,6 +114,23 @@
   accent-color: var(--panel-fg);
 }
 
+.select {
+  grid-column: 1 / -1;
+  width: 100%;
+  appearance: none;
+  border: 1px solid var(--panel-line);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--panel-fg);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.select option {
+  color: #111;
+}
+
 .btns {
   display: flex;
   gap: 8px;

@@ -6,6 +6,7 @@ import styles from './SiteNav.module.css';
 
 const LINKS = [
   { href: '/', label: 'Rings' },
+  { href: '/stack', label: 'Stack' },
   { href: '/boxes', label: 'Boxes' },
 ];
 

@@ -2,6 +2,7 @@
  * Expanding water rings over an image (WebGL1, analytic — no simulation).
  *
  * The surface is a train of travelling wave crests around a centre point.
+ * Up to MAX_LAYERS centres can be stacked; their distortions add up.
  * The image is refracted by the surface slope, so the distortion lives on
  * both sides of every crest, and lit from the surface normal.
  */
@@ -38,6 +39,9 @@ export const RING_DEFAULTS: RingParams = {
 
 export type Point = { x: number; y: number }; // canvas uv, y up
 
+/** How many ring centres the shader can stack. */
+export const MAX_LAYERS = 4;
+
 const VERT = `
 attribute vec2 aPos;
 varying vec2 vUv;
@@ -45,11 +49,13 @@ void main() { vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }`;
 
 const FRAG = `
 precision highp float;
+#define MAX_LAYERS ${MAX_LAYERS}
 varying vec2 vUv;
 uniform sampler2D uImg;
 uniform vec2  uRes;       // canvas size in px
 uniform vec2  uImgSize;   // image size in px
-uniform vec2  uCenter;    // ripple centre in canvas uv (y up)
+uniform vec2  uCenters[MAX_LAYERS]; // ripple centres in canvas uv (y up)
+uniform int   uCount;     // how many of uCenters are in use
 uniform float uTime;      // already scaled by speed
 uniform float uSpacing;   // ring spacing, in units of the shorter canvas side
 uniform float uStrength;  // refraction amount
@@ -90,58 +96,66 @@ float waveHeight(float s) {
 void main() {
   float m = min(uRes.x, uRes.y);
   vec2 toPx = uRes / m;                       // uv -> isotropic units
-  vec2 p = (vUv - uCenter) * toPx;
-  float r = length(p);
-  vec2 dir = r > 1e-5 ? p / r : vec2(0.0, 1.0);
-  vec2 tan = vec2(-dir.y, dir.x);
 
-  float s = r / uSpacing - uTime;
-  float ring = floor(s);
-  float h = waveHeight(s);
-  float ds = 0.004;
-  float slope = (waveHeight(s + ds) - waveHeight(s - ds)) / (2.0 * ds);   // dh/ds
+  // Each layer adds to the sample offset, the chromatic split, the surface
+  // slope (for lighting) and the glints.
+  vec2 off = vec2(0.0);
+  vec2 ca = vec2(0.0);
+  vec2 grad = vec2(0.0);
+  float glint = 0.0;
+  for (int i = 0; i < MAX_LAYERS; i++) {
+    if (i >= uCount) break;
+    vec2 p = (vUv - uCenters[i]) * toPx;
+    float r = length(p);
+    vec2 dir = r > 1e-5 ? p / r : vec2(0.0, 1.0);
+    vec2 tan = vec2(-dir.y, dir.x);
 
-  float fadeIn = smoothstep(0.0, uSpacing * 0.9, r);   // calm at the source
-  float disp = uStrength * uSpacing * 0.06 * slope * fadeIn;
+    float s = r / uSpacing - uTime;
+    float ring = floor(s);
+    float h = waveHeight(s);
+    float ds = 0.004;
+    float slope = (waveHeight(s + ds) - waveHeight(s - ds)) / (2.0 * ds);   // dh/ds
 
-  // Fine rippled-glass texture: radial streaks, everywhere, strongest on the waves.
-  float theta = atan(p.y, p.x);
-  float n1 = vnoise(vec2(theta * 70.0, r * 18.0 - uTime * 3.0 + ring * 13.0));
-  float n2 = vnoise(vec2(theta * 160.0 + 3.0, r * 60.0 + ring * 7.0));
-  float tex = (n1 - 0.5) * 0.7 + (n2 - 0.5) * 0.3;
-  float texAmt = uWobble * 0.01 * fadeIn * (0.3 + 0.7 * clamp(h, 0.0, 1.0));
-  vec2 wob = (dir * tex + tan * (vnoise(vec2(theta * 90.0, r * 30.0 + ring)) - 0.5) * 0.6) * texAmt;
+    float fadeIn = smoothstep(0.0, uSpacing * 0.9, r);   // calm at the source
+    float disp = uStrength * uSpacing * 0.06 * slope * fadeIn;
 
-  vec2 q = p - dir * disp + wob;
+    // Fine rippled-glass texture: radial streaks, everywhere, strongest on the waves.
+    float theta = atan(p.y, p.x);
+    float n1 = vnoise(vec2(theta * 70.0, r * 18.0 - uTime * 3.0 + ring * 13.0));
+    float n2 = vnoise(vec2(theta * 160.0 + 3.0, r * 60.0 + ring * 7.0));
+    float tex = (n1 - 0.5) * 0.7 + (n2 - 0.5) * 0.3;
+    float texAmt = uWobble * 0.01 * fadeIn * (0.3 + 0.7 * clamp(h, 0.0, 1.0));
+    vec2 wob = (dir * tex + tan * (vnoise(vec2(theta * 90.0, r * 30.0 + ring)) - 0.5) * 0.6) * texAmt;
 
-  // Chromatic split follows the refraction.
-  vec2 ca = dir * uChroma * 0.25 * disp;
-  vec2 base = uCenter;
+    off += wob - dir * disp;
+    ca += dir * uChroma * 0.25 * disp;        // chromatic split follows the refraction
+    grad += dir * slope * fadeIn;
+    glint += pow(max(0.0, tex + 0.15), 2.0) * clamp(h, 0.0, 1.0) * 0.2 * uWobble * fadeIn;
+  }
+
   vec3 col;
-  col.r = texture2D(uImg, coverUv(base + (q + ca) / toPx)).r;
-  col.g = texture2D(uImg, coverUv(base + q / toPx)).g;
-  col.b = texture2D(uImg, coverUv(base + (q - ca) / toPx)).b;
+  col.r = texture2D(uImg, coverUv(vUv + (off + ca) / toPx)).r;
+  col.g = texture2D(uImg, coverUv(vUv + off / toPx)).g;
+  col.b = texture2D(uImg, coverUv(vUv + (off - ca) / toPx)).b;
 
   // Lighting from the surface normal: slopes facing the light glint,
   // slopes facing away dim only slightly (never a black band).
-  vec2 grad = dir * slope * fadeIn;
   vec3 n = normalize(vec3(-grad * 0.06 * (0.4 + uStrength), 1.0));
   vec3 L = normalize(vec3(-0.35, 0.75, 0.6));
   vec3 H = normalize(L + vec3(0.0, 0.0, 1.0));
   float diff = (dot(n, L) - L.z) * 0.35;
   float spec = max(0.0, pow(max(dot(n, H), 0.0), 220.0) - pow(H.z, 220.0));
-  float glint = pow(max(0.0, tex + 0.15), 2.0) * clamp(h, 0.0, 1.0) * 0.2 * uWobble * fadeIn;
   col = col * (1.0 + diff) + spec * uRim * 0.9 + glint;
 
   gl_FragColor = vec4(col, 1.0);
 }`;
 
-const UNIFORMS = ['uImg', 'uRes', 'uImgSize', 'uCenter', 'uTime', 'uSpacing', 'uStrength', 'uWobble', 'uRim', 'uChroma', 'uCrest'] as const;
+const UNIFORMS = ['uImg', 'uRes', 'uImgSize', 'uCenters', 'uCount', 'uTime', 'uSpacing', 'uStrength', 'uWobble', 'uRim', 'uChroma', 'uCrest'] as const;
 
 export class RingsRenderer {
   readonly supported: boolean;
-  /** Where the ring centre should head; read every frame and eased toward. */
-  goal: () => Point = () => ({ x: 0.5, y: 0.5 });
+  /** Where each ring centre should head (one per layer, up to MAX_LAYERS); read every frame and eased toward. */
+  goals: () => Point[] = () => [{ x: 0.5, y: 0.5 }];
   /** Multiplies the speed param, e.g. to slow things down for prefers-reduced-motion. */
   speedScale = 1;
   private gl!: WebGLRenderingContext;
@@ -150,7 +164,8 @@ export class RingsRenderer {
   private tex!: WebGLTexture;
   private U = {} as Record<(typeof UNIFORMS)[number], WebGLUniformLocation | null>;
   private params: RingParams = { ...RING_DEFAULTS };
-  private center: Point | null = null;
+  private centers: Point[] = [];
+  private centerData = new Float32Array(MAX_LAYERS * 2);
   private imgW = 1;
   private imgH = 1;
   private phase = 0;
@@ -257,11 +272,17 @@ export class RingsRenderer {
     const p = this.params;
     this.phase += dt * p.speed * this.speedScale;
 
-    const goal = this.goal();
-    if (!this.center) this.center = { ...goal };
+    // New layers start at their goal; dropped layers are forgotten.
+    const goals = this.goals().slice(0, MAX_LAYERS);
+    this.centers.length = goals.length;
     const k = 1 - Math.exp(-dt * 6);
-    this.center.x += (goal.x - this.center.x) * k;
-    this.center.y += (goal.y - this.center.y) * k;
+    goals.forEach((goal, i) => {
+      const c = (this.centers[i] ??= { ...goal });
+      c.x += (goal.x - c.x) * k;
+      c.y += (goal.y - c.y) * k;
+      this.centerData[i * 2] = c.x;
+      this.centerData[i * 2 + 1] = c.y;
+    });
 
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.useProgram(this.prog);
@@ -275,7 +296,8 @@ export class RingsRenderer {
     gl.uniform1i(U.uImg, 0);
     gl.uniform2f(U.uRes, this.canvas.width, this.canvas.height);
     gl.uniform2f(U.uImgSize, this.imgW, this.imgH);
-    gl.uniform2f(U.uCenter, this.center.x, this.center.y);
+    gl.uniform2fv(U.uCenters, this.centerData);
+    gl.uniform1i(U.uCount, goals.length);
     gl.uniform1f(U.uTime, this.phase);
     gl.uniform1f(U.uSpacing, p.spacing);
     gl.uniform1f(U.uStrength, p.strength);

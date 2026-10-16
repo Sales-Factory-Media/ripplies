@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { RING_CONTROLS, RING_DEFAULTS, RingsRenderer, type Point } from '@/lib/ringsRenderer';
-import { applyConfig, downloadJson, toConfig, type RingsState } from '@/lib/ringsConfig';
+import { MIRROR_MODES, applyConfig, downloadJson, mirrorPoints, toConfig, type MirrorMode, type RingsState } from '@/lib/ringsConfig';
 import { paintBackground } from '@/lib/paintBackground';
 import styles from './RingsStudio.module.css';
 
@@ -15,7 +15,12 @@ const subscribeNarrow = (cb: () => void) => {
 
 const isJson = (f: File) => f.type === 'application/json' || f.name.endsWith('.json');
 
-export default function RingsStudio() {
+type Props = {
+  /** Stack page: extra ring layers mirror the cursor. */
+  stack?: boolean;
+};
+
+export default function RingsStudio({ stack = false }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const logoRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -25,8 +30,10 @@ export default function RingsStudio() {
 
   const [state, setState] = useState<RingsState>({
     params: RING_DEFAULTS,
-    center: null,
-    showSampleUi: true,
+    // Start the stack off-centre so the mirrored layers don't all sit on one spot.
+    center: stack ? { x: 0.3, y: 0.68 } : null,
+    showSampleUi: !stack,
+    mirror: stack ? 'all' : undefined,
   });
   const stateRef = useRef(state);
   useEffect(() => {
@@ -55,7 +62,7 @@ export default function RingsStudio() {
     renderer.setImage(painted);
     renderer.setParams(stateRef.current.params);
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) renderer.speedScale = 0.25;
-    renderer.goal = () => {
+    const primary = () => {
       const s = stateRef.current;
       if (cursorRef.current) return cursorRef.current;
       if (s.center) return s.center;
@@ -66,6 +73,10 @@ export default function RingsStudio() {
         return { x: (b.left + b.width / 2 - c.left) / c.width, y: 1 - (b.top + b.height / 2 - c.top) / c.height };
       }
       return { x: 0.5, y: 0.5 };
+    };
+    renderer.goals = () => {
+      const mirror = stateRef.current.mirror;
+      return mirror ? mirrorPoints(primary(), mirror) : [primary()];
     };
     const ro = new ResizeObserver(() => renderer.resize());
     ro.observe(canvas);
@@ -189,7 +200,7 @@ export default function RingsStudio() {
 
       <section className={`${styles.panel} ${collapsed ? styles.collapsed : ''}`} aria-label="Ripple controls">
         <header className={styles.panelHeader}>
-          <h1>Rings</h1>
+          <h1>{stack ? 'Stack' : 'Rings'}</h1>
           <button
             className={styles.iconBtn}
             aria-expanded={!collapsed}
@@ -216,7 +227,27 @@ export default function RingsStudio() {
             </button>
             <input ref={imageInputRef} type="file" accept="image/*" hidden onChange={e => loadImageFile(e.target.files?.[0])} />
           </div>
-          <p className={styles.hint}>Or drop / paste an image anywhere. The ripples follow your cursor.</p>
+          <p className={styles.hint}>
+            Or drop / paste an image anywhere. The ripples follow your cursor{stack ? ' and the other layers mirror it' : ''}.
+          </p>
+
+          {stack && (
+            <div className={styles.row}>
+              <label htmlFor="ring-mirror">Mirror layers</label>
+              <select
+                id="ring-mirror"
+                className={styles.select}
+                value={state.mirror}
+                onChange={e => setState(s => ({ ...s, mirror: e.target.value as MirrorMode }))}
+              >
+                {MIRROR_MODES.map(m => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {RING_CONTROLS.map(({ key, label, min, max, step }) => (
             <div className={styles.row} key={key}>
@@ -247,7 +278,7 @@ export default function RingsStudio() {
           </label>
 
           <div className={styles.btns}>
-            <button className={styles.btn} onClick={() => downloadJson(toConfig(state), 'rippler-config.json')}>
+            <button className={styles.btn} onClick={() => downloadJson(toConfig(state), stack ? 'rippler-stack-config.json' : 'rippler-config.json')}>
               Save config
             </button>
             <button className={styles.btn} onClick={() => configInputRef.current?.click()}>
