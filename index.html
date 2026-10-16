@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rippler</title>
+<style>
+  :root {
+    --panel-bg: rgba(18, 22, 20, 0.72);
+    --panel-fg: #f2f4f1;
+    --panel-muted: rgba(242, 244, 241, 0.62);
+    --panel-line: rgba(255, 255, 255, 0.12);
+    --accent: #f2f4f1;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0f1310; color: var(--panel-fg); overflow: hidden;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  img#fallback { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; display: none; }
+
+  /* Sample UI from the reference */
+  .hero { position: fixed; left: 50%; bottom: 0; transform: translateX(-50%); width: min(420px, 100%);
+    padding: 0 16px calc(24px + env(safe-area-inset-bottom)); display: flex; flex-direction: column;
+    align-items: center; pointer-events: none; }
+  .hero[hidden] { display: none; }
+  .logo { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center;
+    background: rgba(255,255,255,0.10); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    margin-bottom: -32px; position: relative; z-index: 1; }
+  .card { width: 100%; padding: 44px 24px 28px; border-radius: 24px; text-align: center;
+    background: rgba(255,255,255,0.12); backdrop-filter: blur(10px) saturate(1.1);
+    -webkit-backdrop-filter: blur(10px) saturate(1.1); font-size: 16px; line-height: 1.45; color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.25); }
+  .cta { pointer-events: auto; margin-top: 24px; width: 100%; height: 56px; border: 0; border-radius: 999px;
+    background: #fff; color: #111; font: 500 17px/1 inherit; font-family: inherit; cursor: pointer; }
+
+  /* Controls */
+  .panel { position: fixed; top: 16px; right: 16px; width: min(300px, calc(100% - 32px)); padding: 14px 16px 16px;
+    border-radius: 16px; background: var(--panel-bg); border: 1px solid var(--panel-line);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); font-size: 13px; z-index: 10; }
+  .panel header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .panel h1 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: 0.01em; }
+  .panel .body { margin-top: 12px; display: grid; gap: 10px; }
+  .panel.collapsed .body { display: none; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; }
+  .row label { color: var(--panel-muted); }
+  .row output { font-variant-numeric: tabular-nums; color: var(--panel-muted); }
+  .row input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn { appearance: none; border: 1px solid var(--panel-line); background: rgba(255,255,255,0.08);
+    color: var(--panel-fg); border-radius: 10px; padding: 8px 10px; font: inherit; cursor: pointer; }
+  .btn:hover { background: rgba(255,255,255,0.14); }
+  .btn.primary { background: #f2f4f1; color: #111; border-color: transparent; font-weight: 600; }
+  .toggle { display: flex; align-items: center; gap: 8px; color: var(--panel-muted); cursor: pointer; }
+  .hint { color: var(--panel-muted); font-size: 12px; line-height: 1.4; margin: 0; }
+  .icon-btn { border: 0; background: transparent; color: var(--panel-fg); cursor: pointer; padding: 4px; font-size: 16px; line-height: 1; }
+  :focus-visible { outline: 2px solid #9fd3ff; outline-offset: 2px; }
+
+  .drop { position: fixed; inset: 0; display: none; place-items: center; z-index: 20;
+    background: rgba(10,14,12,0.55); border: 3px dashed rgba(255,255,255,0.6); font-size: 20px; font-weight: 600; }
+  body.dragging .drop { display: grid; }
+</style>
+</head>
+<body>
+<canvas id="gl" aria-label="Background image with an animated glass ripple effect" role="img"></canvas>
+<img id="fallback" alt="">
+
+<div class="hero" id="hero">
+  <div class="logo" id="logo" aria-hidden="true">
+    <svg width="40" height="40" viewBox="-20 -20 40 40" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round">
+      <g id="spoke"><line x1="0" y1="-6.5" x2="0" y2="-17"/></g>
+      <use href="#spoke" transform="rotate(30)"/><use href="#spoke" transform="rotate(60)"/>
+      <use href="#spoke" transform="rotate(90)"/><use href="#spoke" transform="rotate(120)"/>
+      <use href="#spoke" transform="rotate(150)"/><use href="#spoke" transform="rotate(180)"/>
+      <use href="#spoke" transform="rotate(210)"/><use href="#spoke" transform="rotate(240)"/>
+      <use href="#spoke" transform="rotate(270)"/><use href="#spoke" transform="rotate(300)"/>
+      <use href="#spoke" transform="rotate(330)"/>
+      <circle r="3.4" fill="#fff" stroke="none"/>
+    </svg>
+  </div>
+  <div class="card">Take control of your finances with budgets that fit your needs and help you reach your goals faster.</div>
+  <button class="cta" type="button">Get Started</button>
+</div>
+
+<section class="panel" id="panel" aria-label="Ripple controls">
+  <header>
+    <h1>Rippler</h1>
+    <button class="icon-btn" id="collapse" aria-expanded="true" aria-controls="panel-body" title="Hide controls">–</button>
+  </header>
+  <div class="body" id="panel-body">
+    <div class="btns">
+      <button class="btn primary" id="pick">Choose image…</button>
+      <button class="btn" id="url-btn">From URL…</button>
+      <input type="file" id="file" accept="image/*" hidden>
+    </div>
+    <p class="hint">Or drop / paste an image anywhere. Click the image to move the ripple centre.</p>
+
+    <div class="row"><label for="speed">Speed</label><output for="speed"></output>
+      <input type="range" id="speed" min="0" max="1.5" step="0.01" value="0.45"></div>
+    <div class="row"><label for="spacing">Ring spacing</label><output for="spacing"></output>
+      <input type="range" id="spacing" min="0.1" max="1" step="0.01" value="0.36"></div>
+    <div class="row"><label for="strength">Refraction</label><output for="strength"></output>
+      <input type="range" id="strength" min="0" max="1.2" step="0.01" value="0.42"></div>
+    <div class="row"><label for="crest">Wave front width</label><output for="crest"></output>
+      <input type="range" id="crest" min="0.02" max="0.4" step="0.01" value="0.12"></div>
+    <div class="row"><label for="wobble">Glass texture</label><output for="wobble"></output>
+      <input type="range" id="wobble" min="0" max="2" step="0.01" value="1"></div>
+    <div class="row"><label for="rim">Rim highlight</label><output for="rim"></output>
+      <input type="range" id="rim" min="0" max="1.5" step="0.01" value="0.45"></div>
+    <div class="row"><label for="chroma">Chromatic split</label><output for="chroma"></output>
+      <input type="range" id="chroma" min="0" max="1" step="0.01" value="0.25"></div>
+
+    <label class="toggle"><input type="checkbox" id="follow"> Follow cursor</label>
+    <label class="toggle"><input type="checkbox" id="show-ui" checked> Show sample UI</label>
+
+    <div class="btns">
+      <button class="btn" id="save-cfg">Save config</button>
+      <button class="btn" id="load-cfg">Load config…</button>
+      <input type="file" id="cfg-file" accept=".json,application/json" hidden>
+    </div>
+  </div>
+</section>
+
+<div class="drop" aria-hidden="true">Drop an image or a config file</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('gl');
+  const fallbackImg = document.getElementById('fallback');
+  const hero = document.getElementById('hero');
+  const logo = document.getElementById('logo');
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const gl = canvas.getContext('webgl', { antialias: false, premultipliedAlpha: false });
+
+  // ---------- Default image: a procedurally painted landscape ----------
+  function paintDefault() {
+    const W = 1200, H = 1800;
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+    const sky = g.createLinearGradient(0, 0, 0, H * 0.55);
+    sky.addColorStop(0, '#a9bfb0'); sky.addColorStop(0.45, '#d8cfa6'); sky.addColorStop(1, '#c9bf9a');
+    g.fillStyle = sky; g.fillRect(0, 0, W, H);
+
+    const dab = (x, y, rx, ry, col, a = 1, rot = 0) => {
+      g.save(); g.globalAlpha = a; g.fillStyle = col; g.translate(x, y); g.rotate(rot);
+      g.beginPath(); g.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2); g.fill(); g.restore();
+    };
+    // sky brushwork
+    for (let i = 0; i < 900; i++) {
+      const y = rnd() * H * 0.5;
+      dab(rnd() * W, y, 20 + rnd() * 50, 4 + rnd() * 6,
+        ['#e6dcb4', '#b9c9b8', '#cfc49c', '#a6b8ad'][(rnd() * 4) | 0], 0.25, (rnd() - 0.5) * 0.3);
+    }
+    // distant hills
+    g.fillStyle = '#8c7f8f';
+    g.beginPath(); g.moveTo(0, H * 0.5);
+    for (let x = 0; x <= W; x += 40) g.lineTo(x, H * 0.47 + Math.sin(x * 0.006) * 30 + rnd() * 10);
+    g.lineTo(W, H); g.lineTo(0, H); g.fill();
+    for (let i = 0; i < 400; i++) dab(rnd() * W, H * 0.47 + rnd() * H * 0.08, 14 + rnd() * 30, 4 + rnd() * 6,
+      ['#9a8d9b', '#7d7286', '#a39383', '#c0a48c'][(rnd() * 4) | 0], 0.5);
+    // ground
+    const ground = g.createLinearGradient(0, H * 0.55, 0, H);
+    ground.addColorStop(0, '#5f7a45'); ground.addColorStop(1, '#2f5a2c');
+    g.fillStyle = ground; g.fillRect(0, H * 0.56, W, H * 0.44);
+    for (let i = 0; i < 2500; i++) {
+      const y = H * 0.55 + rnd() * H * 0.45;
+      dab(rnd() * W, y, 6 + rnd() * 18, 3 + rnd() * 8,
+        ['#3f6b35', '#6c8a3e', '#2d4f2a', '#8fa34a', '#c9b843', '#567a3a'][(rnd() * 6) | 0], 0.6, rnd() * 3);
+    }
+    // yellow shrubs
+    for (let i = 0; i < 260; i++) {
+      const cx = W * 0.12 + Math.sin(i) * W * 0.12, cy = H * 0.66 + rnd() * H * 0.12;
+      dab(cx + (rnd() - 0.5) * 160, cy, 6 + rnd() * 14, 5 + rnd() * 10,
+        ['#d6c341', '#b9a92f', '#8a8a2e', '#e7d76a'][(rnd() * 4) | 0], 0.75);
+    }
+    // tree trunk
+    g.strokeStyle = '#6e4b3a'; g.lineWidth = 26; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(W * 0.56, H * 0.95); g.bezierCurveTo(W * 0.55, H * 0.7, W * 0.52, H * 0.55, W * 0.53, H * 0.42); g.stroke();
+    g.strokeStyle = '#a0634a'; g.lineWidth = 8;
+    g.beginPath(); g.moveTo(W * 0.545, H * 0.93); g.bezierCurveTo(W * 0.54, H * 0.7, W * 0.515, H * 0.55, W * 0.525, H * 0.44); g.stroke();
+    // tree canopy
+    for (let i = 0; i < 2200; i++) {
+      const t = rnd(), a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd());
+      const cx = W * (0.62 + 0.18 * t), cy = H * (0.1 + 0.45 * t);
+      dab(cx + Math.cos(a) * rr * W * 0.28, cy + Math.sin(a) * rr * H * 0.12, 8 + rnd() * 22, 6 + rnd() * 14,
+        ['#1f3a2a', '#2c4a31', '#143022', '#3d5e3a', '#4e6f3f'][(rnd() * 5) | 0], 0.85, rnd() * 3);
+    }
+    // canvas grain
+    const img = g.getImageData(0, 0, W, H), d = img.data;
+    for (let i = 0; i < d.length; i += 4) { const n = (rnd() - 0.5) * 18; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+    g.putImageData(img, 0, 0);
+    return c;
+  }
+
+  // ---------- No WebGL: show the image plainly ----------
+  if (!gl) {
+    fallbackImg.src = paintDefault().toDataURL('image/jpeg', 0.9);
+    fallbackImg.style.display = 'block';
+    canvas.style.display = 'none';
+    wireImageInputs(src => { fallbackImg.src = src; });
+    return;
+  }
+
+  // ---------- Shaders ----------
+  const VERT = `
+    attribute vec2 aPos;
+    varying vec2 vUv;
+    void main() { vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }
+  `;
+
+  const FRAG = `
+    precision highp float;
+    varying vec2 vUv;
+    uniform sampler2D uImg;
+    uniform vec2  uRes;       // canvas size in px
+    uniform vec2  uImgSize;   // image size in px
+    uniform vec2  uCenter;    // ripple centre in canvas uv (y up)
+    uniform float uTime;      // already scaled by speed
+    uniform float uSpacing;   // ring spacing, in units of the shorter canvas side
+    uniform float uStrength;  // refraction amount
+    uniform float uWobble;    // fine rippled-glass texture
+    uniform float uRim;       // rim highlight
+    uniform float uChroma;    // chromatic split
+    uniform float uCrest;     // width of a wave's leading face (ring units)
+
+    // object-fit: cover
+    vec2 coverUv(vec2 uv) {
+      float ca = uRes.x / uRes.y, ia = uImgSize.x / uImgSize.y;
+      vec2 s = ca > ia ? vec2(1.0, ia / ca) : vec2(ca / ia, 1.0);
+      vec2 c = (uv - 0.5) * s + 0.5;
+      return 1.0 - abs(1.0 - mod(c, 2.0));        // mirror at the edges instead of smearing
+    }
+
+    float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float vnoise(vec2 p) {
+      vec2 i = floor(p), f = fract(p);
+      vec2 u = f * f * (3.0 - 2.0 * f);
+      return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x),
+                 mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
+    }
+
+    // One wave crest as a function of signed distance d from it (in ring units,
+    // positive = outward, ahead of the crest). Steep leading face, long gentle
+    // back slope, rounded top. Continuous with zero slope at the peak.
+    float crest(float d) {
+      float w = d > 0.0 ? uCrest : 0.4;
+      return exp(-(sqrt(d * d + 0.0004) - 0.02) / w);
+    }
+    // Sum of the nearby crests. Crests sit at integer s.
+    float waveHeight(float s) {
+      float f = fract(s);
+      return crest(f + 1.0) + crest(f) + crest(f - 1.0) + crest(f - 2.0) + crest(f - 3.0);
+    }
+
+    void main() {
+      float m = min(uRes.x, uRes.y);
+      vec2 toPx = uRes / m;                       // uv -> isotropic units
+      vec2 p = (vUv - uCenter) * toPx;
+      float r = length(p);
+      vec2 dir = r > 1e-5 ? p / r : vec2(0.0, 1.0);
+      vec2 tan = vec2(-dir.y, dir.x);
+
+      // The surface is a train of travelling water waves. Height is a smooth
+      // function of s (ring coordinate), and the image is refracted by the
+      // surface SLOPE — so the distortion lives on both sides of every crest,
+      // not just inside a band.
+      float s = r / uSpacing - uTime;
+      float ring = floor(s);
+      float h = waveHeight(s);
+      float ds = 0.004;
+      float slope = (waveHeight(s + ds) - waveHeight(s - ds)) / (2.0 * ds);   // dh/ds
+
+      float fadeIn = smoothstep(0.0, uSpacing * 0.9, r);   // calm at the source
+      float disp = uStrength * uSpacing * 0.06 * slope * fadeIn;
+
+      // Fine rippled-glass texture: radial streaks, everywhere, strongest on the waves.
+      float theta = atan(p.y, p.x);
+      float n1 = vnoise(vec2(theta * 70.0, r * 18.0 - uTime * 3.0 + ring * 13.0));
+      float n2 = vnoise(vec2(theta * 160.0 + 3.0, r * 60.0 + ring * 7.0));
+      float tex = (n1 - 0.5) * 0.7 + (n2 - 0.5) * 0.3;
+      float texAmt = uWobble * 0.01 * fadeIn * (0.3 + 0.7 * clamp(h, 0.0, 1.0));
+      vec2 wob = (dir * tex + tan * (vnoise(vec2(theta * 90.0, r * 30.0 + ring)) - 0.5) * 0.6) * texAmt;
+
+      vec2 q = p - dir * disp + wob;
+
+      // Chromatic split follows the refraction.
+      vec2 ca = dir * uChroma * 0.25 * disp;
+      vec2 base = uCenter;
+      vec3 col;
+      col.r = texture2D(uImg, coverUv(base + (q + ca) / toPx)).r;
+      col.g = texture2D(uImg, coverUv(base + q / toPx)).g;
+      col.b = texture2D(uImg, coverUv(base + (q - ca) / toPx)).b;
+
+      // Lighting from the actual surface normal: slopes facing the light glint,
+      // slopes facing away dim only slightly (relative to flat water, never a black band).
+      vec2 grad = dir * slope * fadeIn;
+      vec3 n = normalize(vec3(-grad * 0.06 * (0.4 + uStrength), 1.0));
+      vec3 L = normalize(vec3(-0.35, 0.75, 0.6));
+      vec3 H = normalize(L + vec3(0.0, 0.0, 1.0));
+      float diff = (dot(n, L) - L.z) * 0.35;
+      float spec = max(0.0, pow(max(dot(n, H), 0.0), 220.0) - pow(H.z, 220.0));
+      float glint = pow(max(0.0, tex + 0.15), 2.0) * clamp(h, 0.0, 1.0) * 0.2 * uWobble * fadeIn;
+      col = col * (1.0 + diff) + spec * uRim * 0.9 + glint;
+
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+
+  function compile(type, src) {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src); gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+    return sh;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(prog, 'aPos');
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+  const U = {};
+  ['uImg', 'uRes', 'uImgSize', 'uCenter', 'uTime', 'uSpacing', 'uStrength', 'uWobble', 'uRim', 'uChroma', 'uCrest']
+    .forEach(n => U[n] = gl.getUniformLocation(prog, n));
+
+  // ---------- Texture ----------
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  gl.uniform1i(U.uImg, 0);
+  let imgW = 1, imgH = 1;
+
+  const maxTex = Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE), 4096);
+  function setImage(source) {
+    let w = source.naturalWidth || source.width, h = source.naturalHeight || source.height;
+    let src = source;
+    if (Math.max(w, h) > maxTex) {                         // downscale oversized photos
+      const k = maxTex / Math.max(w, h);
+      const c = document.createElement('canvas');
+      c.width = Math.round(w * k); c.height = Math.round(h * k);
+      c.getContext('2d').drawImage(source, 0, 0, c.width, c.height);
+      src = c; w = c.width; h = c.height;
+    }
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, src);
+    imgW = w; imgH = h;
+  }
+  setImage(paintDefault());
+
+  // ---------- Controls ----------
+  const ctl = id => document.getElementById(id);
+  const params = {};
+  ['speed', 'spacing', 'strength', 'crest', 'wobble', 'rim', 'chroma'].forEach(id => {
+    const el = ctl(id), out = el.parentElement.querySelector('output');
+    if (id === 'speed' && reduceMotion) el.value = 0.12;
+    const sync = () => { params[id] = parseFloat(el.value); out.textContent = params[id].toFixed(2); };
+    el.addEventListener('input', sync); sync();
+  });
+
+  function setCollapsed(collapsed) {
+    const btn = ctl('collapse');
+    ctl('panel').classList.toggle('collapsed', collapsed);
+    btn.textContent = collapsed ? '+' : '–';
+    btn.setAttribute('aria-expanded', String(!collapsed));
+    btn.title = collapsed ? 'Show controls' : 'Hide controls';
+  }
+  ctl('collapse').addEventListener('click', () => setCollapsed(!ctl('panel').classList.contains('collapsed')));
+  if (innerWidth < 640) setCollapsed(true);             // keep the effect visible on phones
+  ctl('show-ui').addEventListener('change', e => { hero.hidden = !e.target.checked; });
+
+  function loadSrc(src) {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try { setImage(img); }
+      catch (err) { alert('That image could not be used (the host does not allow cross-origin use). Try downloading it and choosing the file instead.'); }
+    };
+    img.onerror = () => alert('Could not load that image.');
+    img.src = src;
+  }
+  wireImageInputs(loadSrc);
+
+  function wireImageInputs(onSrc) {
+    const fileEl = document.getElementById('file');
+    const useFile = f => { if (f && f.type.startsWith('image/')) onSrc(URL.createObjectURL(f)); };
+    document.getElementById('pick').addEventListener('click', () => fileEl.click());
+    fileEl.addEventListener('change', () => useFile(fileEl.files[0]));
+    document.getElementById('url-btn').addEventListener('click', () => {
+      const u = prompt('Image URL (the host must allow cross-origin use):');
+      if (u) onSrc(u.trim());
+    });
+    let depth = 0;
+    addEventListener('dragenter', e => { e.preventDefault(); depth++; document.body.classList.add('dragging'); });
+    addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; document.body.classList.remove('dragging'); } });
+    addEventListener('dragover', e => e.preventDefault());
+    addEventListener('drop', e => {
+      e.preventDefault(); depth = 0; document.body.classList.remove('dragging');
+      useFile(e.dataTransfer.files[0]);
+    });
+    addEventListener('paste', e => {
+      const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
+      if (item) useFile(item.getAsFile());
+    });
+  }
+
+  // ---------- Ripple centre ----------
+  // Default: the logo (as in the reference). Click pins it; "follow cursor" eases it toward the pointer.
+  let pinned = null, target = null;
+  const center = { x: 0.5, y: 0.35 };
+  function logoCenter() {
+    if (hero.hidden) return { x: 0.5, y: 0.5 };
+    const b = logo.getBoundingClientRect();
+    return { x: (b.left + b.width / 2) / innerWidth, y: 1 - (b.top + b.height / 2) / innerHeight };
+  }
+  const toUv = e => ({ x: e.clientX / innerWidth, y: 1 - e.clientY / innerHeight });
+  canvas.addEventListener('pointerdown', e => { pinned = toUv(e); });
+  addEventListener('pointermove', e => { if (ctl('follow').checked) target = toUv(e); });
+  ctl('follow').addEventListener('change', e => { if (!e.target.checked) target = null; });
+  addEventListener('dblclick', () => { pinned = null; });
+
+  // ---------- Save / load config (JSON) ----------
+  const PARAM_IDS = ['speed', 'spacing', 'strength', 'crest', 'wobble', 'rim', 'chroma'];
+  function exportConfig() {
+    const cfg = {
+      type: 'rippler-config',
+      version: 1,
+      params: Object.fromEntries(PARAM_IDS.map(id => [id, params[id]])),
+      center: pinned ? { x: +pinned.x.toFixed(4), y: +pinned.y.toFixed(4) } : null,   // null = follow the logo
+      followCursor: ctl('follow').checked,
+      showSampleUi: ctl('show-ui').checked,
+    };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(cfg, null, 2) + '\n'], { type: 'application/json' }));
+    const a = Object.assign(document.createElement('a'), { href: url, download: 'rippler-config.json' });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  function applyConfig(cfg) {
+    if (!cfg || cfg.type !== 'rippler-config' || typeof cfg.params !== 'object') {
+      throw new Error('This is not a Rippler config file.');
+    }
+    for (const id of PARAM_IDS) {
+      const v = Number(cfg.params[id]);
+      if (!Number.isFinite(v)) continue;                   // missing keys keep their current value
+      const el = ctl(id);
+      el.value = Math.min(+el.max, Math.max(+el.min, v));
+      el.dispatchEvent(new Event('input'));
+    }
+    const c = cfg.center;
+    pinned = c && Number.isFinite(+c.x) && Number.isFinite(+c.y)
+      ? { x: Math.min(1, Math.max(0, +c.x)), y: Math.min(1, Math.max(0, +c.y)) } : null;
+    for (const [id, key] of [['follow', 'followCursor'], ['show-ui', 'showSampleUi']]) {
+      if (typeof cfg[key] !== 'boolean') continue;
+      ctl(id).checked = cfg[key];
+      ctl(id).dispatchEvent(new Event('change'));
+    }
+  }
+  async function loadConfigFile(file) {
+    try { applyConfig(JSON.parse(await file.text())); }
+    catch (err) { alert('Could not load config: ' + (err instanceof SyntaxError ? 'the file is not valid JSON.' : err.message)); }
+  }
+  ctl('save-cfg').addEventListener('click', exportConfig);
+  ctl('load-cfg').addEventListener('click', () => ctl('cfg-file').click());
+  ctl('cfg-file').addEventListener('change', e => {
+    if (e.target.files[0]) loadConfigFile(e.target.files[0]);
+    e.target.value = '';                                    // allow re-loading the same file
+  });
+  addEventListener('drop', e => {                           // dropping a .json anywhere also loads it
+    const f = e.dataTransfer.files[0];
+    if (f && (f.type === 'application/json' || f.name.endsWith('.json'))) loadConfigFile(f);
+  });
+
+  // ---------- Resize & render ----------
+  function resize() {
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    const w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr);
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; gl.viewport(0, 0, w, h); }
+  }
+  addEventListener('resize', resize); resize();
+  Object.assign(center, logoCenter());
+
+  let phase = 0, last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    phase += dt * params.speed;
+
+    const goal = target || pinned || logoCenter();
+    const k = 1 - Math.exp(-dt * 6);
+    center.x += (goal.x - center.x) * k; center.y += (goal.y - center.y) * k;
+
+    gl.uniform2f(U.uRes, canvas.width, canvas.height);
+    gl.uniform2f(U.uImgSize, imgW, imgH);
+    gl.uniform2f(U.uCenter, center.x, center.y);
+    gl.uniform1f(U.uTime, phase);
+    gl.uniform1f(U.uSpacing, params.spacing);
+    gl.uniform1f(U.uStrength, params.strength);
+    gl.uniform1f(U.uWobble, params.wobble);
+    gl.uniform1f(U.uRim, params.rim);
+    gl.uniform1f(U.uChroma, params.chroma);
+    gl.uniform1f(U.uCrest, params.crest);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
