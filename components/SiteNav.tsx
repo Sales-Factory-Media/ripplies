@@ -33,6 +33,9 @@ export default function SiteNav() {
           spiel by <strong>Sales Factory</strong> <span aria-hidden="true">↗</span>
           <span className={styles.srOnly}> (opens in a new tab)</span>
         </a>
+        <Link className={styles.pill} href="/credits" aria-current={pathname === '/credits' ? 'page' : undefined}>
+          Credits
+        </Link>
         <a className={`${styles.pill} ${styles.right}`} href={INSPIRATION_URL} target="_blank" rel="noopener noreferrer">
           Inspired by <strong>@MoizArshi29</strong>’s post on X <span aria-hidden="true">↗</span>
           <span className={styles.srOnly}> (opens in a new tab)</span>
