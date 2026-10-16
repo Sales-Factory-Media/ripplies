@@ -208,6 +208,13 @@
   }
 }
 
+/* Below ~480px the two footer credits stack onto two lines. */
+@media (max-width: 479px) {
+  .hero {
+    padding-bottom: calc(88px + env(safe-area-inset-bottom));
+  }
+}
+
 .scene :focus-visible {
   outline: 2px solid #9fd3ff;
   outline-offset: 2px;

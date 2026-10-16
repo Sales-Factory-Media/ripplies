@@ -27,11 +27,11 @@ export const RING_CONTROLS: { key: keyof RingParams; label: string; min: number;
 ];
 
 export const RING_DEFAULTS: RingParams = {
-  speed: 0.45,
-  spacing: 0.36,
-  strength: 0.42,
-  crest: 0.12,
-  wobble: 1,
+  speed: 0.35,
+  spacing: 0.28,
+  strength: 0.57,
+  crest: 0.2,
+  wobble: 1.23,
   rim: 0.45,
   chroma: 0.25,
 };

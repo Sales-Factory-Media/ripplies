@@ -36,11 +36,24 @@
   color: #111;
 }
 
-.credit {
+/* Bottom bar: maker credit bottom-left, inspiration credit bottom-right.
+   When both don't fit on one line (narrow phones) they wrap onto two lines. */
+.footer {
   position: fixed;
+  left: 12px;
   right: 12px;
   bottom: calc(12px + env(safe-area-inset-bottom));
   z-index: 50;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.pill {
+  pointer-events: auto;
   padding: 6px 12px;
   border-radius: 999px;
   background: rgba(18, 22, 20, 0.55);
@@ -52,24 +65,28 @@
   text-align: center;
   text-decoration: none;
   white-space: nowrap;
-  max-width: calc(100% - 24px);
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.credit strong {
+.right {
+  margin-left: auto; /* stays right-aligned when wrapped onto its own line */
+}
+
+.pill strong {
   color: #fff;
   font-weight: 600;
 }
 
-.credit:hover {
+.pill:hover {
   color: #fff;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
 .link:focus-visible,
-.credit:focus-visible {
+.pill:focus-visible {
   outline: 2px solid #9fd3ff;
   outline-offset: 2px;
 }
