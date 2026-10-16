@@ -39,8 +39,21 @@ export const RING_DEFAULTS: RingParams = {
 
 export type Point = { x: number; y: number }; // canvas uv, y up
 
+/** The shape the waves take around each centre. The order matches uShape in the shader. */
+export const WAVE_SHAPES = [
+  { value: 'circle', label: 'Circles' },
+  { value: 'square', label: 'Squares' },
+  { value: 'diamond', label: 'Diamonds' },
+  { value: 'hexagon', label: 'Hexagons' },
+  { value: 'flower', label: 'Flower' },
+  { value: 'star', label: 'Star' },
+  { value: 'spiral', label: 'Spiral' },
+  { value: 'lines', label: 'Straight lines' },
+] as const;
+export type WaveShape = (typeof WAVE_SHAPES)[number]['value'];
+
 /** How many ring centres the shader can stack. */
-export const MAX_LAYERS = 4;
+export const MAX_LAYERS = 24;
 
 const VERT = `
 attribute vec2 aPos;
@@ -63,6 +76,7 @@ uniform float uWobble;    // fine rippled-glass texture
 uniform float uRim;       // rim highlight
 uniform float uChroma;    // chromatic split
 uniform float uCrest;     // width of a wave's leading face (ring units)
+uniform int   uShape;     // index into WAVE_SHAPES
 
 // object-fit: cover
 vec2 coverUv(vec2 uv) {
@@ -78,6 +92,41 @@ float vnoise(vec2 p) {
   vec2 u = f * f * (3.0 - 2.0 * f);
   return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x),
              mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
+}
+
+// Distance from the centre for the chosen wave shape (waves sit at equal
+// steps of it), and its gradient g: the way the waves travel at p.
+float shapeDist(vec2 p, float r, vec2 rh, out vec2 g) {
+  vec2 th = vec2(-rh.y, rh.x);
+  vec2 sg = vec2(p.x >= 0.0 ? 1.0 : -1.0, p.y >= 0.0 ? 1.0 : -1.0);
+  vec2 ap = abs(p);
+  if (uShape == 1) {                          // square
+    if (ap.x > ap.y) { g = vec2(sg.x, 0.0); return ap.x; }
+    g = vec2(0.0, sg.y); return ap.y;
+  }
+  if (uShape == 2) {                          // diamond
+    g = sg * 0.7071; return (ap.x + ap.y) * 0.7071;
+  }
+  if (uShape == 3) {                          // hexagon, flat top and bottom
+    float a = ap.x * 0.8660 + ap.y * 0.5;
+    if (a > ap.y) { g = vec2(sg.x * 0.8660, sg.y * 0.5); return a; }
+    g = vec2(0.0, sg.y); return ap.y;
+  }
+  if (uShape == 4 || uShape == 5) {           // flower (6 soft petals) or star (5 points)
+    float k = uShape == 4 ? 6.0 : 5.0;
+    float a = uShape == 4 ? 0.18 : 0.32;
+    float t = atan(p.y, p.x);
+    float f = 1.0 - a * cos(k * t);
+    g = f * rh + a * k * sin(k * t) * th; return r * f;
+  }
+  if (uShape == 6) {                          // spiral: one wave winding outward
+    g = rh + th * uSpacing / (6.2832 * max(r, 1e-3));
+    return r + uSpacing * atan(p.y, p.x) / 6.2832;
+  }
+  if (uShape == 7) {                          // straight lines, moving away from the centre line
+    g = vec2(0.0, sg.y); return ap.y;
+  }
+  g = rh; return r;                           // circle
 }
 
 // One wave crest as a function of signed distance d from it (in ring units,
@@ -107,11 +156,15 @@ void main() {
     if (i >= uCount) break;
     vec2 p = (vUv - uCenters[i]) * toPx;
     float r = length(p);
-    vec2 dir = r > 1e-5 ? p / r : vec2(0.0, 1.0);
+    vec2 g;
+    float d = shapeDist(p, r, r > 1e-5 ? p / r : vec2(0.0, 1.0), g);
+    vec2 dir = length(g) > 1e-5 ? normalize(g) : vec2(0.0, 1.0);
     vec2 tan = vec2(-dir.y, dir.x);
 
-    float s = r / uSpacing - uTime;
-    float ring = floor(s);
+    float s = d / uSpacing - uTime;
+    // The spiral has no separate rings; a ring number there would put a seam in the texture.
+    float ring = uShape == 6 ? 0.0 : floor(s);
+    float nd = uShape == 6 ? r : d;           // texture coordinate along the waves, seam-free
     float h = waveHeight(s);
     float ds = 0.004;
     float slope = (waveHeight(s + ds) - waveHeight(s - ds)) / (2.0 * ds);   // dh/ds
@@ -121,11 +174,11 @@ void main() {
 
     // Fine rippled-glass texture: radial streaks, everywhere, strongest on the waves.
     float theta = atan(p.y, p.x);
-    float n1 = vnoise(vec2(theta * 70.0, r * 18.0 - uTime * 3.0 + ring * 13.0));
-    float n2 = vnoise(vec2(theta * 160.0 + 3.0, r * 60.0 + ring * 7.0));
+    float n1 = vnoise(vec2(theta * 70.0, nd * 18.0 - uTime * 3.0 + ring * 13.0));
+    float n2 = vnoise(vec2(theta * 160.0 + 3.0, nd * 60.0 + ring * 7.0));
     float tex = (n1 - 0.5) * 0.7 + (n2 - 0.5) * 0.3;
     float texAmt = uWobble * 0.01 * fadeIn * (0.3 + 0.7 * clamp(h, 0.0, 1.0));
-    vec2 wob = (dir * tex + tan * (vnoise(vec2(theta * 90.0, r * 30.0 + ring)) - 0.5) * 0.6) * texAmt;
+    vec2 wob = (dir * tex + tan * (vnoise(vec2(theta * 90.0, nd * 30.0 + ring)) - 0.5) * 0.6) * texAmt;
 
     off += wob - dir * disp;
     ca += dir * uChroma * 0.25 * disp;        // chromatic split follows the refraction
@@ -150,12 +203,14 @@ void main() {
   gl_FragColor = vec4(col, 1.0);
 }`;
 
-const UNIFORMS = ['uImg', 'uRes', 'uImgSize', 'uCenters', 'uCount', 'uTime', 'uSpacing', 'uStrength', 'uWobble', 'uRim', 'uChroma', 'uCrest'] as const;
+const UNIFORMS = ['uImg', 'uRes', 'uImgSize', 'uCenters', 'uCount', 'uTime', 'uSpacing', 'uStrength', 'uWobble', 'uRim', 'uChroma', 'uCrest', 'uShape'] as const;
 
 export class RingsRenderer {
   readonly supported: boolean;
   /** Where each ring centre should head (one per layer, up to MAX_LAYERS); read every frame and eased toward. */
   goals: () => Point[] = () => [{ x: 0.5, y: 0.5 }];
+  /** The shape of the waves. */
+  shape: WaveShape = 'circle';
   /** Multiplies the speed param, e.g. to slow things down for prefers-reduced-motion. */
   speedScale = 1;
   private gl!: WebGLRenderingContext;
@@ -168,6 +223,7 @@ export class RingsRenderer {
   private centerData = new Float32Array(MAX_LAYERS * 2);
   private imgW = 1;
   private imgH = 1;
+  private video: HTMLVideoElement | null = null;
   private phase = 0;
   private raf = 0;
   private last = 0;
@@ -215,6 +271,7 @@ export class RingsRenderer {
   /** Throws if the image is cross-origin tainted. */
   setImage(source: HTMLImageElement | HTMLCanvasElement) {
     if (!this.supported) return;
+    this.video = null;
     const gl = this.gl;
     let w = source instanceof HTMLImageElement ? source.naturalWidth : source.width;
     let h = source instanceof HTMLImageElement ? source.naturalHeight : source.height;
@@ -236,6 +293,35 @@ export class RingsRenderer {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, src);
     this.imgW = w;
     this.imgH = h;
+  }
+
+  /**
+   * Shows a video behind the rings; its current frame is copied to the GPU every
+   * frame. The caller plays, pauses and cleans up the element. Throws on the
+   * first frame if the video is cross-origin tainted.
+   */
+  setVideo(video: HTMLVideoElement) {
+    if (!this.supported) return;
+    this.video = video;
+    this.uploadVideoFrame();
+  }
+
+  private uploadVideoFrame() {
+    const v = this.video;
+    if (!v || v.readyState < v.HAVE_CURRENT_DATA || !v.videoWidth) return; // not ready yet: keep the last picture
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.tex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    try {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, v);
+    } catch (err) {
+      // Cross-origin video: drop it rather than break the animation loop.
+      console.warn('Video cannot be used as a texture', err);
+      this.video = null;
+      return;
+    }
+    this.imgW = v.videoWidth;
+    this.imgH = v.videoHeight;
   }
 
   resize() {
@@ -284,6 +370,7 @@ export class RingsRenderer {
       this.centerData[i * 2 + 1] = c.y;
     });
 
+    this.uploadVideoFrame();
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.useProgram(this.prog);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
@@ -305,6 +392,7 @@ export class RingsRenderer {
     gl.uniform1f(U.uRim, p.rim);
     gl.uniform1f(U.uChroma, p.chroma);
     gl.uniform1f(U.uCrest, p.crest);
+    gl.uniform1i(U.uShape, Math.max(0, WAVE_SHAPES.findIndex(w => w.value === this.shape)));
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 }

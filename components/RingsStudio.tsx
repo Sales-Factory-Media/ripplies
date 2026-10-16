@@ -1,9 +1,19 @@
 'use client';
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { RING_CONTROLS, RING_DEFAULTS, RingsRenderer, type Point } from '@/lib/ringsRenderer';
-import { MIRROR_MODES, applyConfig, downloadJson, mirrorPoints, toConfig, type MirrorMode, type RingsState } from '@/lib/ringsConfig';
-import { paintBackground } from '@/lib/paintBackground';
+import { MAX_LAYERS, RING_CONTROLS, RING_DEFAULTS, RingsRenderer, WAVE_SHAPES, type Point, type WaveShape } from '@/lib/ringsRenderer';
+import {
+  DEFAULT_STACK_LAYERS,
+  MIN_STACK_LAYERS,
+  MIRROR_MODES,
+  applyConfig,
+  downloadJson,
+  mirrorPoints,
+  toConfig,
+  type MirrorMode,
+  type RingsState,
+} from '@/lib/ringsConfig';
+import { BACKGROUNDS, DEFAULT_BACKGROUND, VIDEO_BACKGROUNDS, paintPreset } from '@/lib/backgrounds';
 import styles from './RingsStudio.module.css';
 
 const NARROW = '(max-width: 639px)';
@@ -14,9 +24,11 @@ const subscribeNarrow = (cb: () => void) => {
 };
 
 const isJson = (f: File) => f.type === 'application/json' || f.name.endsWith('.json');
+const THUMB_W = 150;
+const THUMB_H = 100;
 
 type Props = {
-  /** Stack page: extra ring layers mirror the cursor. */
+  /** Stack page: extra ring layers copy the cursor (mirrored or spun around the middle). */
   stack?: boolean;
 };
 
@@ -33,12 +45,16 @@ export default function RingsStudio({ stack = false }: Props) {
     // Start the stack off-centre so the mirrored layers don't all sit on one spot.
     center: stack ? { x: 0.3, y: 0.68 } : null,
     showSampleUi: !stack,
-    mirror: stack ? 'all' : undefined,
+    shape: 'circle',
+    background: DEFAULT_BACKGROUND,
+    mirror: stack ? 'rotate' : undefined,
+    layers: stack ? DEFAULT_STACK_LAYERS : undefined,
   });
   const stateRef = useRef(state);
   useEffect(() => {
     stateRef.current = state;
     rendererRef.current?.setParams(state.params);
+    if (rendererRef.current) rendererRef.current.shape = state.shape ?? 'circle';
   }, [state]);
 
   // Panel starts collapsed on phones so the effect stays visible; the user's toggle wins after that.
@@ -48,19 +64,17 @@ export default function RingsStudio({ stack = false }: Props) {
 
   const [dragging, setDragging] = useState(false);
   const [fallbackSrc, setFallbackSrc] = useState<string | null>(null);
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   // ---- Renderer lifecycle ----
   useEffect(() => {
     const canvas = canvasRef.current!;
-    const painted = paintBackground();
     const renderer = new RingsRenderer(canvas);
-    if (!renderer.supported) {
-      queueMicrotask(() => setFallbackSrc(painted.toDataURL('image/jpeg', 0.85)));
-      return;
-    }
+    if (!renderer.supported) return;
     rendererRef.current = renderer;
-    renderer.setImage(painted);
     renderer.setParams(stateRef.current.params);
+    renderer.shape = stateRef.current.shape ?? 'circle';
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) renderer.speedScale = 0.25;
     const primary = () => {
       const s = stateRef.current;
@@ -75,8 +89,8 @@ export default function RingsStudio({ stack = false }: Props) {
       return { x: 0.5, y: 0.5 };
     };
     renderer.goals = () => {
-      const mirror = stateRef.current.mirror;
-      return mirror ? mirrorPoints(primary(), mirror) : [primary()];
+      const { mirror, layers } = stateRef.current;
+      return mirror ? mirrorPoints(primary(), mirror, layers, canvas.clientWidth / Math.max(1, canvas.clientHeight)) : [primary()];
     };
     const ro = new ResizeObserver(() => renderer.resize());
     ro.observe(canvas);
@@ -88,11 +102,64 @@ export default function RingsStudio({ stack = false }: Props) {
     };
   }, []);
 
-  // ---- Images ----
+  // ---- Backgrounds: built-in pictures, videos, or the user's own image/video ----
+  function stopVideo() {
+    const v = videoRef.current;
+    if (!v) return;
+    v.pause();
+    v.removeAttribute('src');
+    v.load();
+    videoRef.current = null;
+  }
+
+  function showCanvas(painted: HTMLCanvasElement) {
+    stopVideo();
+    if (rendererRef.current) rendererRef.current.setImage(painted);
+    else setFallbackSrc(painted.toDataURL('image/jpeg', 0.85));
+  }
+
+  function playVideo(src: string, poster?: string) {
+    stopVideo();
+    if (!rendererRef.current) {
+      if (poster) setFallbackSrc(poster); // no WebGL: show a still instead
+      return;
+    }
+    const v = document.createElement('video');
+    v.crossOrigin = 'anonymous';
+    v.muted = true;
+    v.loop = true;
+    v.playsInline = true;
+    v.onerror = () => alert('Could not play that video.');
+    v.src = src;
+    videoRef.current = v;
+    rendererRef.current.setVideo(v);
+    v.play().catch(() => {}); // muted autoplay is allowed; a refusal just leaves the first frame
+  }
+
+  // Built-in backgrounds follow state.background; undefined means the user's own file is showing.
+  useEffect(() => {
+    const id = state.background;
+    if (!id) return;
+    const video = VIDEO_BACKGROUNDS.find(v => v.id === id);
+    // Deferred: without WebGL these set the fallback picture (state), which an effect shouldn't do directly.
+    queueMicrotask(() => (video ? playVideo(video.src, video.thumb) : showCanvas(paintPreset(id))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a background change should repaint
+  }, [state.background]);
+  useEffect(() => stopVideo, []);
+
+  // Thumbnails are painted in the browser after the first render.
+  useEffect(() => {
+    queueMicrotask(() =>
+      setThumbs(Object.fromEntries(BACKGROUNDS.map(b => [b.id, paintPreset(b.id, THUMB_W, THUMB_H).toDataURL('image/jpeg', 0.8)]))),
+    );
+  }, []);
+
   function loadImageSrc(src: string) {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
+      setState(s => ({ ...s, background: undefined }));
+      stopVideo();
       if (!rendererRef.current) {
         setFallbackSrc(src);
         return;
@@ -107,7 +174,12 @@ export default function RingsStudio({ stack = false }: Props) {
     img.src = src;
   }
   const loadImageFile = (f?: File | null) => {
-    if (f && f.type.startsWith('image/')) loadImageSrc(URL.createObjectURL(f));
+    if (!f) return;
+    if (f.type.startsWith('image/')) loadImageSrc(URL.createObjectURL(f));
+    else if (f.type.startsWith('video/')) {
+      setState(s => ({ ...s, background: undefined }));
+      playVideo(URL.createObjectURL(f));
+    }
   };
 
   // ---- Config ----
@@ -214,7 +286,7 @@ export default function RingsStudio({ stack = false }: Props) {
         <div className={styles.body} id="rings-panel-body">
           <div className={styles.btns}>
             <button className={`${styles.btn} ${styles.primary}`} onClick={() => imageInputRef.current?.click()}>
-              Choose image…
+              Choose image or video…
             </button>
             <button
               className={styles.btn}
@@ -225,15 +297,73 @@ export default function RingsStudio({ stack = false }: Props) {
             >
               From URL…
             </button>
-            <input ref={imageInputRef} type="file" accept="image/*" hidden onChange={e => loadImageFile(e.target.files?.[0])} />
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/*,video/*"
+              hidden
+              onChange={e => {
+                loadImageFile(e.target.files?.[0]);
+                e.target.value = ''; // allow picking the same file again
+              }}
+            />
+          </div>
+          <div className={styles.thumbs} role="group" aria-label="Built-in backgrounds">
+            {BACKGROUNDS.map(b => (
+              <button
+                key={b.id}
+                className={styles.thumb}
+                aria-pressed={state.background === b.id}
+                aria-label={b.label}
+                title={b.label}
+                onClick={() => setState(s => ({ ...s, background: b.id }))}
+              >
+                {thumbs[b.id] && (
+                  // eslint-disable-next-line @next/next/no-img-element -- painted at runtime as a data URL
+                  <img src={thumbs[b.id]} alt="" />
+                )}
+              </button>
+            ))}
+            {VIDEO_BACKGROUNDS.map(v => (
+              <button
+                key={v.id}
+                className={styles.thumb}
+                aria-pressed={state.background === v.id}
+                aria-label={v.label}
+                title={v.label}
+                onClick={() => setState(s => ({ ...s, background: v.id }))}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element -- tiny still from the video */}
+                <img src={v.thumb} alt="" />
+                <span className={styles.play} aria-hidden="true">
+                  ▶
+                </span>
+              </button>
+            ))}
           </div>
           <p className={styles.hint}>
-            Or drop / paste an image anywhere. The ripples follow your cursor{stack ? ' and the other layers mirror it' : ''}.
+            Or drop / paste an image or video anywhere. The ripples follow your cursor{stack ? ' and the other layers copy it' : ''}.
           </p>
+
+          <div className={styles.row}>
+            <label htmlFor="ring-shape">Wave shape</label>
+            <select
+              id="ring-shape"
+              className={styles.select}
+              value={state.shape ?? 'circle'}
+              onChange={e => setState(s => ({ ...s, shape: e.target.value as WaveShape }))}
+            >
+              {WAVE_SHAPES.map(w => (
+                <option key={w.value} value={w.value}>
+                  {w.label}
+                </option>
+              ))}
+            </select>
+          </div>
 
           {stack && (
             <div className={styles.row}>
-              <label htmlFor="ring-mirror">Mirror layers</label>
+              <label htmlFor="ring-mirror">Layer pattern</label>
               <select
                 id="ring-mirror"
                 className={styles.select}
@@ -246,6 +376,25 @@ export default function RingsStudio({ stack = false }: Props) {
                   </option>
                 ))}
               </select>
+            </div>
+          )}
+
+          {stack && MIRROR_MODES.find(m => m.value === state.mirror)?.usesCount && (
+            <div className={styles.row}>
+              <label htmlFor="ring-layers">Layers</label>
+              <output htmlFor="ring-layers">{state.layers}</output>
+              <input
+                id="ring-layers"
+                type="range"
+                min={MIN_STACK_LAYERS}
+                max={MAX_LAYERS}
+                step={1}
+                value={state.layers ?? DEFAULT_STACK_LAYERS}
+                onChange={e => {
+                  const layers = parseInt(e.target.value, 10);
+                  setState(s => ({ ...s, layers }));
+                }}
+              />
             </div>
           )}
 
@@ -301,7 +450,7 @@ export default function RingsStudio({ stack = false }: Props) {
 
       {dragging && (
         <div className={styles.drop} aria-hidden="true">
-          Drop an image or a config file
+          Drop an image, a video or a config file
         </div>
       )}
     </main>
