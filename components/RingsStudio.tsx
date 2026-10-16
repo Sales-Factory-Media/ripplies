@@ -26,7 +26,6 @@ export default function RingsStudio() {
   const [state, setState] = useState<RingsState>({
     params: RING_DEFAULTS,
     center: null,
-    followCursor: false,
     showSampleUi: true,
   });
   const stateRef = useRef(state);
@@ -58,7 +57,7 @@ export default function RingsStudio() {
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) renderer.speedScale = 0.25;
     renderer.goal = () => {
       const s = stateRef.current;
-      if (s.followCursor && cursorRef.current) return cursorRef.current;
+      if (cursorRef.current) return cursorRef.current;
       if (s.center) return s.center;
       const logo = logoRef.current;
       if (logo) {
@@ -110,7 +109,7 @@ export default function RingsStudio() {
     }
   }
 
-  // ---- Window-level input: drag & drop, paste, cursor follow, double-click reset ----
+  // ---- Window-level input: drag & drop, paste, cursor follow ----
   // Handlers read the latest closures through a ref so the listeners are attached once.
   const handlersRef = useRef({ loadImageFile, loadConfigFile });
   useEffect(() => {
@@ -146,14 +145,12 @@ export default function RingsStudio() {
     const onMove = (e: PointerEvent) => {
       cursorRef.current = { x: e.clientX / innerWidth, y: 1 - e.clientY / innerHeight };
     };
-    const onDblClick = () => setState(s => ({ ...s, center: null }));
     addEventListener('dragenter', onDragEnter);
     addEventListener('dragleave', onDragLeave);
     addEventListener('dragover', onDragOver);
     addEventListener('drop', onDrop);
     addEventListener('paste', onPaste);
     addEventListener('pointermove', onMove);
-    addEventListener('dblclick', onDblClick);
     return () => {
       removeEventListener('dragenter', onDragEnter);
       removeEventListener('dragleave', onDragLeave);
@@ -161,15 +158,8 @@ export default function RingsStudio() {
       removeEventListener('drop', onDrop);
       removeEventListener('paste', onPaste);
       removeEventListener('pointermove', onMove);
-      removeEventListener('dblclick', onDblClick);
     };
   }, []);
-
-  const pinCenter = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const b = e.currentTarget.getBoundingClientRect();
-    const center = { x: (e.clientX - b.left) / b.width, y: 1 - (e.clientY - b.top) / b.height };
-    setState(s => ({ ...s, center }));
-  };
 
   return (
     <main className={styles.scene}>
@@ -178,7 +168,6 @@ export default function RingsStudio() {
         className={styles.canvas}
         role="img"
         aria-label="Background image with an animated water ripple effect"
-        onPointerDown={pinCenter}
       />
       {fallbackSrc && (
         // eslint-disable-next-line @next/next/no-img-element -- runtime data/blob URL, not an optimisable asset
@@ -195,12 +184,6 @@ export default function RingsStudio() {
               <circle r="3.4" fill="#fff" stroke="none" />
             </svg>
           </div>
-          <div className={styles.card}>
-            Take control of your finances with budgets that fit your needs and help you reach your goals faster.
-          </div>
-          <button className={styles.cta} type="button">
-            Get Started
-          </button>
         </div>
       )}
 
@@ -233,7 +216,7 @@ export default function RingsStudio() {
             </button>
             <input ref={imageInputRef} type="file" accept="image/*" hidden onChange={e => loadImageFile(e.target.files?.[0])} />
           </div>
-          <p className={styles.hint}>Or drop / paste an image anywhere. Click the image to move the ripple centre, double-click to reset.</p>
+          <p className={styles.hint}>Or drop / paste an image anywhere. The ripples follow your cursor.</p>
 
           {RING_CONTROLS.map(({ key, label, min, max, step }) => (
             <div className={styles.row} key={key}>
@@ -254,14 +237,6 @@ export default function RingsStudio() {
             </div>
           ))}
 
-          <label className={styles.toggle}>
-            <input
-              type="checkbox"
-              checked={state.followCursor}
-              onChange={e => setState(s => ({ ...s, followCursor: e.target.checked }))}
-            />{' '}
-            Follow cursor
-          </label>
           <label className={styles.toggle}>
             <input
               type="checkbox"

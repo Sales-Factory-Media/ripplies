@@ -5,8 +5,7 @@ export type RingsConfig = {
   type: 'rippler-config';
   version: 1;
   params: RingParams;
-  center: Point | null; // null = follow the logo
-  followCursor: boolean;
+  center: Point | null; // where the rings sit before the cursor moves; null = the logo
   showSampleUi: boolean;
 };
 
@@ -18,7 +17,6 @@ export function toConfig(state: RingsState): RingsConfig {
     version: 1,
     params: state.params,
     center: state.center ? { x: +state.center.x.toFixed(4), y: +state.center.y.toFixed(4) } : null,
-    followCursor: state.followCursor,
     showSampleUi: state.showSampleUi,
   };
 }
@@ -43,7 +41,6 @@ export function applyConfig(raw: unknown, current: RingsState): RingsState {
   return {
     params,
     center,
-    followCursor: typeof cfg.followCursor === 'boolean' ? cfg.followCursor : current.followCursor,
     showSampleUi: typeof cfg.showSampleUi === 'boolean' ? cfg.showSampleUi : current.showSampleUi,
   };
 }
